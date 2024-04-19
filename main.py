@@ -12,6 +12,8 @@ from model.transformer import train, decode
 from pathlib import Path
 import json
 
+# Global device variable
+device = ""
 
 def dyn_batch_with_padding(new, i, sofar):
     prev_max_len = sofar / (i - 1) if i > 1 else 0
@@ -106,14 +108,19 @@ def parse_args():
     parser.add_argument('--model_path', type=str, default="models")
     parser.add_argument('--decoding_path', type=str, default="decoding")
 
+    # device
+    parser.add_argument('--device', type=str, default="cpu", choices=['cpu', 'cuda', 'mps'], help='cuda, mps or cpu')
+
     return parser.parse_args()
 
 
 def set_seeds(seed):
     random.seed(seed)
     np.random.seed(seed)
+
+    # this sets seeds for cpu and all devices
     torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    # torch.cuda.manual_seed_all(seed)
 
 
 def curtime():
@@ -128,6 +135,8 @@ def override(args, load_dict, except_name):
 
 if __name__ == '__main__':
     args = parse_args()
+
+    print(f"Device: {args.device}")
 
     if args.mode == 'train':
         if args.load_from is not None:
@@ -209,13 +218,13 @@ if __name__ == '__main__':
     args.__dict__.update({'trg_vocab': len(TRG.vocab), 'src_vocab': len(SRC.vocab)})
 
     train_flag = True
-    train_real = data.BucketIterator(train_data, args.batch_size, device='cuda',
+    train_real = data.BucketIterator(train_data, args.batch_size, device=device,
                                      batch_size_fn=dyn_batch_with_padding,
                                      train=train_flag, repeat=train_flag,
                                      shuffle=train_flag, sort_within_batch=True, sort=False)
 
     devbatch = 20 if args.beam_size == 1 else 1
-    dev_real = data.Iterator(dev_data, devbatch, device='cuda', batch_size_fn=None,
+    dev_real = data.Iterator(dev_data, devbatch, device=device, batch_size_fn=None,
                              train=False, repeat=False, shuffle=False, sort=False)
     args_str = json.dumps(args.__dict__, indent=4, sort_keys=True)
     print(args_str)
@@ -260,7 +269,7 @@ else:
 
     test_data = ParallelDataset(path=args.test, exts=args.lang, fields=(SRC, TRG, GRA))
     batch_size = 20 if args.beam_size == 1 else 1
-    test_real = data.Iterator(test_data, batch_size, device='cuda', batch_size_fn=None,
+    test_real = data.Iterator(test_data, batch_size, device=device, batch_size_fn=None,
                               train=False, repeat=False, shuffle=False, sort=False)
 
     print('{} Load data done'.format(curtime()))

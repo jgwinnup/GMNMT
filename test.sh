@@ -1,11 +1,11 @@
 #!/bin/bash
-datapath=
+datapath=bpe_data
 
 modelname=${1}
 tgt=${2}
 gpu=${3}
 
-UDA_VISIBLE_DEVICES=$gpu python -u main.py --mode test --load_from models/${modelname} \
+CUDA_VISIBLE_DEVICES=$gpu python -u main.py --mode test --load_from models/${modelname} \
 --test $datapath/test_2016_flickr.bpe --ref $datapath/test_2016_flickr.lc.norm.tok.$tgt \
 --boxfeat $datapath/test_2016_flickr.resxyxy.pkl --boxprobs $datapath/boxporbs.pkl \
 --writetrans decoding/${modelname}.2016.$tgt.b4trans --beam_size 4 >>${modelname}.tranlog 2>&1

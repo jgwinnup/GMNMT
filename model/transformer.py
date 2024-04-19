@@ -99,7 +99,7 @@ def transformer(args):
 
     encoder = GATEncoder(d_model, d_hidden, n_heads, enc_dp, args.n_enclayers)
     tgt_emb_pos = nn.Sequential(Embeddings(d_model, trg_vocab), PositionalEncoding(d_model, input_dp))
-    decoder = Decoder(clone(DecoderLayer(d_model, n_heads, d_hidden, dec_dp), n_layers))
+    decoder = Decoder(clone(DecoderLayer(d_model, n_heads, d_hidden, dec_dp), N=n_layers), N=n_layers)
     generator = Generator(d_model, trg_vocab)
     model = EncoderDecoder(encoder, decoder, src_emb_pos, tgt_emb_pos, generator)
 
@@ -128,10 +128,13 @@ def train(args, train_iter, dev, src, tgt, checkpoint):
     srcpadid = src.vocab.stoi['<pad>']
     tgtpadid = tgt.vocab.stoi['<pad>']
 
+    train_device = torch.device(args.device)
+    print(f"Train device: {args.device} -> {train_device}")
+
     if checkpoint is not None:
         print('model.load_state_dict(checkpoint[model])')
         model.load_state_dict(checkpoint['model'])
-    model.cuda()
+    model.to(train_device)
 
     if args.optimizer == 'Noam':
         adamopt = torch.optim.Adam(model.parameters(), betas=(0.9, 0.98), eps=1e-9)
@@ -164,7 +167,7 @@ def train(args, train_iter, dev, src, tgt, checkpoint):
     smoothing_value = smoothing / (args.trg_vocab - 2)
     one_hot = torch.full((args.trg_vocab,), smoothing_value)
     one_hot[tgtpadid] = 0
-    one_hot = one_hot.unsqueeze(0).cuda()
+    one_hot = one_hot.unsqueeze(0).to(train_device)
 
     allboxfeats = pickle.load(open(args.boxfeat[0], 'rb'))
     valboxfeats = pickle.load(open(args.boxfeat[1], 'rb'))
@@ -173,131 +176,129 @@ def train(args, train_iter, dev, src, tgt, checkpoint):
 
     topk = 5
     thre = 0.0
+    objdim = args.objdim
 
+    for iters, train_batch in enumerate(train_iter):
+        iters += offset
 
-objdim = args.objdim
+        if iters > maxsteps:
+            print('reached the maximum updating steps.')
+            break
 
-for iters, train_batch in enumerate(train_iter):
-    iters += offset
+        model.train()
 
-    if iters > maxsteps:
-        print('reached the maximum updating steps.')
-        break
+        t1 = time.time()
 
-    model.train()
+        sources, source_masks = prepare_sources(train_batch.src, srcpadid, args.share_vocab)
+        target_inputs, target_outputs, target_ipmasks, n_tokens = prepare_targets(train_batch.trg, tgtpadid)
 
-    t1 = time.time()
+        imgs, aligns, regions_num = train_batch.extra_0
 
-    sources, source_masks = prepare_sources(train_batch.src, srcpadid, args.share_vocab)
-    target_inputs, target_outputs, target_ipmasks, n_tokens = prepare_targets(train_batch.trg, tgtpadid)
+        # B Tobj
+        obj_feat = sources.new_zeros(sources.size(0), max(regions_num), topk, objdim).float()
+        # B 1 Tobj*topk
+        obj_mask = source_masks.new_zeros(sources.size(0), max(regions_num) * topk)
 
-    imgs, aligns, regions_num = train_batch.extra_0
+        # B Tx Tobj*topk
+        matrix = sources.new_zeros(sources.size(0), sources.size(1), max(regions_num) * topk).float()
 
-    # B Tobj
-    obj_feat = sources.new_zeros(sources.size(0), max(regions_num), topk, objdim).float()
-    # B 1 Tobj*topk
-    obj_mask = source_masks.new_zeros(sources.size(0), max(regions_num) * topk)
+        for ib, img in enumerate(imgs):
+            # phrase_num, 5, 2048 (numpy)
+            boxfeat = torch.tensor(allboxfeats[img]).reshape(-1, 5, objdim)
 
-    # B Tx Tobj*topk
-    matrix = sources.new_zeros(sources.size(0), sources.size(1), max(regions_num) * topk).float()
+            # phrase_num * 5
+            img_boxprobs = torch.tensor(boxprobs[img])
 
-    for ib, img in enumerate(imgs):
-        # phrase_num, 5, 2048 (numpy)
-        boxfeat = torch.tensor(allboxfeats[img]).reshape(-1, 5, objdim)
+            ge_thre = (img_boxprobs >= thre).byte()
+            # keep top 1
+            ge_thre[list(range(0, ge_thre.size(0), 5))] = 1
+            obj_mask[ib, :ge_thre.size(0)] = ge_thre
+            obj_feat[ib, :boxfeat.size(0)] = boxfeat[:, :topk]
 
-        # phrase_num * 5
-        img_boxprobs = torch.tensor(boxprobs[img])
+            for item in aligns[ib]:
+                ## item: text_word_id, object_id
+                objixs = sources.new_tensor([n + item[1] * topk for n in range(topk)])
+                matrix[ib, item[0], objixs] = ge_thre[objixs].float().to(train_device)
 
-        ge_thre = (img_boxprobs >= thre).byte()
-        # keep top 1
-        ge_thre[list(range(0, ge_thre.size(0), 5))] = 1
-        obj_mask[ib, :ge_thre.size(0)] = ge_thre
-        obj_feat[ib, :boxfeat.size(0)] = boxfeat[:, :topk]
+        # batch_size, objectnum, objdim
+        obj_feat = obj_feat.view(sources.size(0), -1, objdim)
+        obj_mask = obj_mask.unsqueeze(1)
 
-        for item in aligns[ib]:
-            ## item: text_word_id, object_id
-            objixs = sources.new_tensor([n + item[1] * topk for n in range(topk)])
-            matrix[ib, item[0], objixs] = ge_thre[objixs].float().cuda()
+        outputs = model.forward(sources, target_inputs, source_masks, target_ipmasks,
+                                obj_feat, None, obj_mask, matrix)
 
-    # batch_size, objectnum, objdim
-    obj_feat = obj_feat.view(sources.size(0), -1, objdim)
-    obj_mask = obj_mask.unsqueeze(1)
+        truth_p = one_hot.repeat(target_outputs.size(0), target_outputs.size(1), 1)
+        truth_p.scatter_(2, target_outputs.unsqueeze(2), confidence)
+        truth_p.masked_fill_((target_outputs == tgtpadid).unsqueeze(2), 0)
+        loss = criterion(outputs, truth_p)
 
-    outputs = model.forward(sources, target_inputs, source_masks, target_ipmasks,
-                            obj_feat, None, obj_mask, matrix)
+        if torch.isnan(loss):
+            exit('loss nan!!!!!!!!!')
 
-    truth_p = one_hot.repeat(target_outputs.size(0), target_outputs.size(1), 1)
-    truth_p.scatter_(2, target_outputs.unsqueeze(2), confidence)
-    truth_p.masked_fill_((target_outputs == tgtpadid).unsqueeze(2), 0)
-    loss = criterion(outputs, truth_p)
+        norm = n_tokens.float()
+        loss = loss / norm
+        loss = loss / args.delay
 
-    if torch.isnan(loss):
-        exit('loss nan!!!!!!!!!')
+        loss.backward()
 
-    norm = n_tokens.float()
-    loss = loss / norm
-    loss = loss / args.delay
+        opt.step()
 
-    loss.backward()
+        output_loss = loss.item() * args.delay
 
-    opt.step()
+        # loss = 0
+        t2 = time.time()
+        print('iters:{} src:({},{}) tgt:({},{}) loss:{:.2f} t:{:.2f} lr:{:.1e}'.format(iters + 1, *sources.size(),
+                                                                                       *target_inputs.size(),
+                                                                                       output_loss, t2 - t1, opt._rate))
+        # from 0 to check error
+        if (iters + 1) % (args.eval_every * args.delay) == 0:
+            with torch.no_grad():
+                score = valid_model(args, model, dev, src, tgt, valboxfeats, boxprobs)
+                print('iters: {} bleu: {} best: {}'.format(iters + 1, score, best_bleu))
+                if score > best_bleu:
+                    best_bleu = score
+                    best_iter = iters
 
-    output_loss = loss.item() * args.delay
+                    print('save best model at iter={}'.format(iters + 1))
+                    checkpoint = {'model': model.state_dict(),
+                                  'optim': opt.optimizer.state_dict(),
+                                  'args': args,
+                                  'bleu': best_bleu}
 
-    # loss = 0
-    t2 = time.time()
-    print('iters:{} src:({},{}) tgt:({},{}) loss:{:.2f} t:{:.2f} lr:{:.1e}'.format(iters + 1, *sources.size(),
-                                                                                   *target_inputs.size(),
-                                                                                   output_loss, t2 - t1, opt._rate))
-    # from 0 to check error
-    if (iters + 1) % (args.eval_every * args.delay) == 0:
-        with torch.no_grad():
-            score = valid_model(args, model, dev, src, tgt, valboxfeats, boxprobs)
-            print('iters: {} bleu: {} best: {}'.format(iters + 1, score, best_bleu))
-            if score > best_bleu:
-                best_bleu = score
-                best_iter = iters
+                    torch.save(checkpoint, '{}/{}.best.pt'.format(args.model_path, args.model))
 
-                print('save best model at iter={}'.format(iters + 1))
-                checkpoint = {'model': model.state_dict(),
-                              'optim': opt.optimizer.state_dict(),
-                              'args': args,
-                              'bleu': best_bleu}
+        if (iters + 1) % (args.save_every * args.delay) == 0:
+            number = 0
+            # for args.resume to continue training
+            print('save (back-up) checkpoints at iter={}'.format(iters + 1))
+            checkpoint = {'model': model.state_dict(),
+                          'optim': opt.optimizer.state_dict(),
+                          'args': args,
+                          'bleu': best_bleu,
+                          'iters': iters + 1}
+            torch.save(checkpoint, '{}/{}.{}.backup.pt'.format(args.model_path, args.model, number))
 
-                torch.save(checkpoint, '{}/{}.best.pt'.format(args.model_path, args.model))
+    with torch.no_grad():
+        score = valid_model(args, model, dev, src, tgt, valboxfeats, boxprobs)
+        print('iters: {} bleu: {} best: {}'.format(iters + 1, score, best_bleu))
+        if score > best_bleu:
+            best_bleu = score
+            best_iter = iters + 1
 
-    if (iters + 1) % (args.save_every * args.delay) == 0:
-        number = 0
-        # for args.resume to continue training
-        print('save (back-up) checkpoints at iter={}'.format(iters + 1))
-        checkpoint = {'model': model.state_dict(),
-                      'optim': opt.optimizer.state_dict(),
-                      'args': args,
-                      'bleu': best_bleu,
-                      'iters': iters + 1}
-        torch.save(checkpoint, '{}/{}.{}.backup.pt'.format(args.model_path, args.model, number))
+            print('save best model at last')
+            checkpoint = {'model': model.state_dict(),
+                          'optim': opt.optimizer.state_dict(),
+                          'args': args,
+                          'bleu': best_bleu}
+            torch.save(checkpoint, '{}/{}.best.pt'.format(args.model_path, args.model))
 
-with torch.no_grad():
-    score = valid_model(args, model, dev, src, tgt, valboxfeats, boxprobs)
-    print('iters: {} bleu: {} best: {}'.format(iters + 1, score, best_bleu))
-    if score > best_bleu:
-        best_bleu = score
-        best_iter = iters + 1
-
-        print('save best model at last')
-        checkpoint = {'model': model.state_dict(),
-                      'optim': opt.optimizer.state_dict(),
-                      'args': args,
-                      'bleu': best_bleu}
-        torch.save(checkpoint, '{}/{}.best.pt'.format(args.model_path, args.model))
-
-print('*******Done********{}'.format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())))
-minutes = (time.time() - start) // 60
-if minutes < 60:
-    print('best:{}, iter:{}, time:{} mins, lr:{:.1e}, '.format(best_bleu, best_iter, minutes, opt._rate))
-else:
-    hours = minutes / 60
-    print('best:{}, iter:{}, time:{:.1f} hours, lr:{:.1e}, '.format(best_bleu, best_iter, hours, opt._rate))
+    print('*******Done********{}'.format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())))
+    minutes = (time.time() - start) // 60
+    if minutes < 60:
+        print('best:{}, iter:{}, time:{} mins, lr:{:.1e}, '.format(best_bleu, best_iter, minutes, opt._rate))
+    else:
+        hours = minutes / 60
+        print('best:{}, iter:{}, time:{:.1f} hours, lr:{:.1e}, '.format(best_bleu, best_iter, hours, opt._rate))
 
 
 def valid_model(args, model, dev, src, tgt, allboxfeats, boxprobs, dev_metrics=None):

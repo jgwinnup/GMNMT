@@ -1,10 +1,11 @@
 #!/bin/bash
-datapath=
+datapath=./bpe_data
 tgt=de
-modelname=
-gpu=$1
-CUDA_VISIBLE_DEVICES=$gpu python -u main.py --model ${modelname} \
---corpus_prex $datapath/train.bpe --lang en $tgt graph \
+modelname=en-de-test
+device=mps
+
+python -u main.py --device ${device} --model ${modelname} \
+--corpus_prex $datapath/train.bpe --lang en ${tgt} graph \
 --valid $datapath/val.bpe --img_dp 0.5 --objdim 2048 --seed 1234 \
 --boxprobs $datapath/boxporbs.pkl --n_enclayers 3 \
 --writetrans decoding/${modelname}.devtrans \
@@ -15,4 +16,4 @@ CUDA_VISIBLE_DEVICES=$gpu python -u main.py --model ${modelname} \
 --n_layers 4 --n_heads 4 --d_model 128 --d_hidden 256 \
 --max_len 100 --eval_every 2000 --save_every 5000 --maximum_steps 80000 >${modelname}.train 2>&1
 
-bash test.sh $modelname $tgt $gpu
+bash test.sh $modelname $tgt $device
