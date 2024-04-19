@@ -37,7 +37,7 @@ def parse_args():
     parser.add_argument('--vocab_size', type=int, default=40000)
     parser.add_argument('--boxfeat', type=str, nargs='+')
     parser.add_argument('--boxprobs', type=str)
-	
+
     parser.add_argument('--n_enclayers', type=int)
     parser.add_argument('--objdim', type=int)
     parser.add_argument('--enc_dp', type=float)
@@ -125,6 +125,7 @@ def override(args, load_dict, except_name):
         if k not in except_name:
             args.__dict__[k] = load_dict[k]
 
+
 if __name__ == '__main__':
     args = parse_args()
 
@@ -169,7 +170,7 @@ if __name__ == '__main__':
 
         # setup random seeds
         if args.seed == 1234:
-           set_seeds(args.seed)
+            set_seeds(args.seed)
 
         DataField = NormalField
         TRG = DataField(init_token='<init>', eos_token='<eos>', batch_first=True)
@@ -201,68 +202,68 @@ if __name__ == '__main__':
                 SRC.build_vocab(train_data, max_size=args.vocab_size)
             TRG.build_vocab(train_data, max_size=args.vocab_size)
 
-			print('save the vocabulary')
-			vocab_path.parent.mkdir(parents=True, exist_ok=True)
-			torch.save([SRC.vocab, TRG.vocab], str(vocab_path))
+            print('save the vocabulary')
+            vocab_path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save([SRC.vocab, TRG.vocab], str(vocab_path))
 
-        args.__dict__.update({'trg_vocab': len(TRG.vocab), 'src_vocab': len(SRC.vocab)})
+    args.__dict__.update({'trg_vocab': len(TRG.vocab), 'src_vocab': len(SRC.vocab)})
 
-        train_flag = True
-        train_real = data.BucketIterator(train_data, args.batch_size, device='cuda',
-                                         batch_size_fn=dyn_batch_with_padding,
-                                         train=train_flag, repeat=train_flag,
-                                         shuffle=train_flag, sort_within_batch=True, sort=False)
+    train_flag = True
+    train_real = data.BucketIterator(train_data, args.batch_size, device='cuda',
+                                     batch_size_fn=dyn_batch_with_padding,
+                                     train=train_flag, repeat=train_flag,
+                                     shuffle=train_flag, sort_within_batch=True, sort=False)
 
-        devbatch = 20 if args.beam_size == 1 else 1
-        dev_real = data.Iterator(dev_data, devbatch, device='cuda', batch_size_fn=None,
-                                 train=False, repeat=False, shuffle=False, sort=False)
-        args_str = json.dumps(args.__dict__, indent=4, sort_keys=True)
-        print(args_str)
+    devbatch = 20 if args.beam_size == 1 else 1
+    dev_real = data.Iterator(dev_data, devbatch, device='cuda', batch_size_fn=None,
+                             train=False, repeat=False, shuffle=False, sort=False)
+    args_str = json.dumps(args.__dict__, indent=4, sort_keys=True)
+    print(args_str)
 
-        print('{} Start training'.format(curtime()))
-        train(args, train_real, dev_real, SRC, TRG, checkpoint)
+    print('{} Start training'.format(curtime()))
+    train(args, train_real, dev_real, SRC, TRG, checkpoint)
 
+else:
+    if len(args.load_from) == 1:
+        load_from = '{}.best.pt'.format(args.load_from)
+        print('{} load the best checkpoint from {}'.format(curtime(), load_from))
+        checkpoint = torch.load(load_from, map_location='cpu')
     else:
-        if len(args.load_from) == 1:
-            load_from = '{}.best.pt'.format(args.load_from)
-            print('{} load the best checkpoint from {}'.format(curtime(), load_from))
-            checkpoint = torch.load(load_from, map_location='cpu')
-        else:
-            raise RuntimeError('must load model')
+        raise RuntimeError('must load model')
 
-        # when translate load_dict update args except some
-        # print('update args from checkpoint')
-        load_dict = checkpoint['args'].__dict__
-        except_name = ['boxprobs', 'mode', 'load_from', 'test', 'ref', 'writetrans', 'beam_size', 'batch_size', 'boxfeat']
-        override(args, load_dict, tuple(except_name))
+    # when translate load_dict update args except some
+    # print('update args from checkpoint')
+    load_dict = checkpoint['args'].__dict__
+    except_name = ['boxprobs', 'mode', 'load_from', 'test', 'ref', 'writetrans', 'beam_size', 'batch_size', 'boxfeat']
+    override(args, load_dict, tuple(except_name))
 
-        args_str = json.dumps(args.__dict__, indent=4, sort_keys=True)
-        print(args_str)
+    args_str = json.dumps(args.__dict__, indent=4, sort_keys=True)
+    print(args_str)
 
-        print('{} Load test set'.format(curtime()))
-        DataField = NormalField
-        TRG = DataField(init_token='<init>', eos_token='<eos>', batch_first=True)
-        SRC = DataField(eos_token='<eos>', batch_first=True) if not args.share_vocab else TRG
-        GRA = GraphField(batch_first=True)
+    print('{} Load test set'.format(curtime()))
+    DataField = NormalField
+    TRG = DataField(init_token='<init>', eos_token='<eos>', batch_first=True)
+    SRC = DataField(eos_token='<eos>', batch_first=True) if not args.share_vocab else TRG
+    GRA = GraphField(batch_first=True)
 
-        vocab_path = Path(args.vocab)
-        vocab_path = vocab_path / '{}_{}_{}.pt'.format('{}-{}'.format(args.lang[0], args.lang[1]), args.vocab_size,
-                                                       'shared' if args.share_vocab else '')
-        if args.load_vocab and vocab_path.exists():
-            src_vocab, trg_vocab = torch.load(str(vocab_path))
-            SRC.vocab = src_vocab
-            TRG.vocab = trg_vocab
-            print('vocab {} loaded'.format(str(vocab_path)))
-        else:
-            raise RuntimeError('no vocab')
-        args.__dict__.update({'trg_vocab': len(TRG.vocab), 'src_vocab': len(SRC.vocab)})
+    vocab_path = Path(args.vocab)
+    vocab_path = vocab_path / '{}_{}_{}.pt'.format('{}-{}'.format(args.lang[0], args.lang[1]), args.vocab_size,
+                                                   'shared' if args.share_vocab else '')
+    if args.load_vocab and vocab_path.exists():
+        src_vocab, trg_vocab = torch.load(str(vocab_path))
+        SRC.vocab = src_vocab
+        TRG.vocab = trg_vocab
+        print('vocab {} loaded'.format(str(vocab_path)))
+    else:
+        raise RuntimeError('no vocab')
+    args.__dict__.update({'trg_vocab': len(TRG.vocab), 'src_vocab': len(SRC.vocab)})
 
-        test_data = ParallelDataset(path=args.test, exts=args.lang, fields=(SRC, TRG, GRA))
-        batch_size = 20 if args.beam_size == 1 else 1
-        test_real = data.Iterator(test_data, batch_size, device='cuda', batch_size_fn=None,
-                                  train=False, repeat=False, shuffle=False, sort=False)
+    test_data = ParallelDataset(path=args.test, exts=args.lang, fields=(SRC, TRG, GRA))
+    batch_size = 20 if args.beam_size == 1 else 1
+    test_real = data.Iterator(test_data, batch_size, device='cuda', batch_size_fn=None,
+                              train=False, repeat=False, shuffle=False, sort=False)
 
-        print('{} Load data done'.format(curtime()))
-        start = time.time()
-        decode(args, test_real, SRC, TRG, checkpoint)
-        print('{} Decode done, time {} mins'.format(curtime(), (time.time() - start) / 60))
+    print('{} Load data done'.format(curtime()))
+    start = time.time()
+    decode(args, test_real, SRC, TRG, checkpoint)
+    print('{} Decode done, time {} mins'.format(curtime(), (time.time() - start) / 60))

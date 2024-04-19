@@ -16,11 +16,13 @@ def Linear(inputdim, outputdim, bias=True, uniform=True):
         nn.init.constant_(linear.bias, 0.0)
     return linear
 
+
 def Embedding(num_embeddings, embedding_dim):
     m = nn.Embedding(num_embeddings, embedding_dim)
     # fairseq and thumt
     nn.init.normal_(m.weight, mean=0, std=embedding_dim ** -0.5)
     return m
+
 
 def prepare_sources(data, padid, share_vocab=True):
     assert data.ndimension() == 2
@@ -32,6 +34,7 @@ def prepare_sources(data, padid, share_vocab=True):
     masks = (data != padid).unsqueeze(1)
     # bytetensor
     return data, masks
+
 
 def prepare_targets(data, tgtpadid):
     tgt_input = data[:, :-1]
@@ -45,6 +48,7 @@ def prepare_targets(data, tgtpadid):
     n_tokens = (tgt_output != tgtpadid).detach().sum()
     return tgt_input, tgt_output, tgt_input_mask, n_tokens
 
+
 def make_subsequent_mask(length, search=False):
     if search:
         shape = (1, length)
@@ -54,8 +58,10 @@ def make_subsequent_mask(length, search=False):
     subsequent_mask = subsequent_mask.unsqueeze(0)
     return subsequent_mask
 
+
 def clone(module, N):
     return nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
+
 
 class Embeddings(nn.Module):
     def __init__(self, d_model, vocab):
@@ -110,17 +116,17 @@ class MultiHeadedAttention(nn.Module):
         if self.v:
             if self.userelu:
                 query, key, value = [F.relu(l(x)).view(nbatches, -1, self.head, self.d_k).transpose(1, 2)
-                                 for l, x in zip(self.linears, (query, key, value))]
+                                     for l, x in zip(self.linears, (query, key, value))]
             else:
                 query, key, value = [l(x).view(nbatches, -1, self.head, self.d_k).transpose(1, 2)
-                                 for l, x in zip(self.linears, (query, key, value))]
+                                     for l, x in zip(self.linears, (query, key, value))]
         else:
             if self.userelu:
                 query, key = [F.relu(l(x)).view(nbatches, -1, self.head, self.d_k).transpose(1, 2)
-                          for l, x in zip(self.linears, (query, key))]
+                              for l, x in zip(self.linears, (query, key))]
             else:
                 query, key = [l(x).view(nbatches, -1, self.head, self.d_k).transpose(1, 2)
-                          for l, x in zip(self.linears, (query, key))]
+                              for l, x in zip(self.linears, (query, key))]
             value = value.view(nbatches, -1, self.head, self.d_k).transpose(1, 2)
 
         x = self.attention(query, key, value, mask)
@@ -129,6 +135,7 @@ class MultiHeadedAttention(nn.Module):
             x = self.linears[-1](x)
         # returen b t dim
         return x
+
 
 class PositionwiseFeedForward(nn.Module):
     def __init__(self, d_model, d_ff, dropout=0.0):
@@ -144,6 +151,7 @@ class PositionwiseFeedForward(nn.Module):
         if self.dropout:
             h = self.dropout(h)
         return self.w_2(h)
+
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, dropout=0.1, max_len=5000):
@@ -167,6 +175,7 @@ class PositionalEncoding(nn.Module):
         x = x + self.pe[:, :x.size(1)]
         return self.dropout(x)
 
+
 class SublayerConnection(nn.Module):
     def __init__(self, size, dropout):
         super(SublayerConnection, self).__init__()
@@ -175,6 +184,7 @@ class SublayerConnection(nn.Module):
 
     def forward(self, x, sublayer):
         return self.norm(x + self.dropout(sublayer(x)))
+
 
 class SublayerConnectionv2(nn.Module):
     def __init__(self, size, dropout):
@@ -185,16 +195,17 @@ class SublayerConnectionv2(nn.Module):
     def forward(self, x, x_trans):
         return self.norm(x + self.dropout(x_trans))
 
+
 class GatedConnection(nn.Module):
     def __init__(self, size, dropout):
         super(GatedConnection, self).__init__()
         self.norm = nn.LayerNorm(size)
         self.dropout = nn.Dropout(dropout)
-        self.gate = Linear(size*2, 1)
+        self.gate = Linear(size * 2, 1)
         self.norm = nn.LayerNorm(size)
+
     def forward(self, x, y):
-        #y = sublayer(x)
+        # y = sublayer(x)
         y = self.dropout(y)
         g = torch.sigmoid(self.gate(torch.cat((x, y), -1)))
         return self.norm(g * y + x)
-

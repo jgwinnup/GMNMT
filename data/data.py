@@ -30,7 +30,7 @@ class NormalField(data.Field):
         sources = []
         for arg in args:
             sources += [getattr(arg, name) for name, field in
-                            arg.fields.items() if field is self]
+                        arg.fields.items() if field is self]
         for data in sources:
             for x in data:
                 if not self.sequential:
@@ -52,7 +52,7 @@ class NormalField(data.Field):
         with torch.cuda.device_of(batch):
             batch = batch.tolist()
 
-        batch = [[self.vocab.itos[ind] for ind in ex] for ex in batch] # denumericalize
+        batch = [[self.vocab.itos[ind] for ind in ex] for ex in batch]  # denumericalize
 
         def trim(s, t):
             sentence = []
@@ -62,7 +62,7 @@ class NormalField(data.Field):
                 sentence.append(w)
             return sentence
 
-        batch = [trim(ex, self.eos_token) for ex in batch] # trim past frst eos
+        batch = [trim(ex, self.eos_token) for ex in batch]  # trim past frst eos
 
         def filter_special(tok):
             return tok not in (self.init_token, self.pad_token)
@@ -95,7 +95,7 @@ class GraphField(data.Field):
             batch_imgs.append(img)
             batch_alighs.append(align)
             if len(align) == 0:
-                #align.extend([[0,0], [1,0]])
+                # align.extend([[0,0], [1,0]])
                 region_num.append(1)
             else:
                 region_num.append(align[-1][-1] + 1)
@@ -148,7 +148,7 @@ class TranslationDataset(data.Dataset):
             Remaining keyword arguments: Passed to the splits method of
                 Dataset.
         """
-        #path = cls.download(root)
+        # path = cls.download(root)
 
         train_data = None if train is None else cls(
             os.path.join(path, train), exts, fields, **kwargs)
@@ -194,6 +194,7 @@ class ParallelDataset(data.Dataset):
                     # elif len(example.src) <= max_len and len(example.trg) <= max_len:
                     #     examples.append(example)
         super(ParallelDataset, self).__init__(examples, fields, **kwargs)
+
 
 '''
 class MyBatch(Batch):

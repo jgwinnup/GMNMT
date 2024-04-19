@@ -3,6 +3,7 @@ import numpy as np
 import math
 import torch.nn as nn
 
+
 class NoamOpt:
     def __init__(self, d_model, factor, warmup, optimizer, grad_clip=-1.0, delay_update=1):
         self.d_model = d_model
