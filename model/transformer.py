@@ -218,7 +218,8 @@ def train(args, train_iter, dev, src, tgt, checkpoint):
             for item in aligns[ib]:
                 ## item: text_word_id, object_id
                 objixs = sources.new_tensor([n + item[1] * topk for n in range(topk)])
-                matrix[ib, item[0], objixs] = ge_thre[objixs].float().to(train_device)
+                # matrix[ib, item[0], objixs] = ge_thre[objixs].float().to(train_device)
+                matrix[ib, item[0], objixs] = ge_thre[objixs].float()
 
         # batch_size, objectnum, objdim
         obj_feat = obj_feat.view(sources.size(0), -1, objdim)

@@ -2,7 +2,8 @@
 datapath=./bpe_data
 tgt=de
 modelname=en-de-test
-device=mps
+#device=mps
+device=cpu
 
 python -u main.py --device ${device} --model ${modelname} \
 --corpus_prex $datapath/train.bpe --lang en ${tgt} graph \

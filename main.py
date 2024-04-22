@@ -136,7 +136,8 @@ def override(args, load_dict, except_name):
 if __name__ == '__main__':
     args = parse_args()
 
-    print(f"Device: {args.device}")
+    device = torch.device(args.device)
+    print(f"Device: {args.device} -> {device}")
 
     if args.mode == 'train':
         if args.load_from is not None:
